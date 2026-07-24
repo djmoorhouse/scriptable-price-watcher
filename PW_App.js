@@ -1,7 +1,8 @@
 const Storage = importModule("PW_Storage");
 const Scraper = importModule("PW_Scraper");
 const Analytics = importModule("PW_Analytics");
-const APP_VERSION = "0.6.0";
+const Radar = importModule("PW_Radar");
+const APP_VERSION = "0.6.1";
 
 function money(value, currency) {
   try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP" }).format(value); }
@@ -169,18 +170,55 @@ async function makeWidget(items) {
   return w;
 }
 
+function radarReason(entry) {
+  if (entry.targetReached) return "Target reached";
+  if (entry.allTimeLow) return "Lowest recorded price";
+  if (entry.dropped) return "Price dropped since last check";
+  return entry.insight.advice;
+}
+
 async function dashboard(items) {
   const table = new UITable(); table.showSeparators = true;
   async function rebuild() {
-    table.removeAllRows(); const header = new UITableRow(); header.isHeader = true; header.height = 54;
-    const h = header.addText("Price Watcher", `${items.length} product${items.length === 1 ? "" : "s"} • v${APP_VERSION}`); h.titleFont = Font.boldSystemFont(24); h.subtitleFont = Font.systemFont(11); table.addRow(header);
+    table.removeAllRows();
+    const radar = Radar.analyseAll(items);
+
+    const header = new UITableRow(); header.isHeader = true; header.height = 62;
+    const h = header.addText("🔥 Deal Radar", `${items.length} product${items.length === 1 ? "" : "s"} • v${APP_VERSION}`); h.titleFont = Font.boldSystemFont(24); h.subtitleFont = Font.systemFont(11); table.addRow(header);
+
     const actions = new UITableRow(); actions.height = 48;
     const add = actions.addButton("＋ Add"); add.widthWeight = 50; add.onTap = async () => { const item = await addProduct(); if (item) { items.push(item); await Storage.save(items); await rebuild(); table.reload(); } };
     const refresh = actions.addButton("↻ Refresh"); refresh.widthWeight = 50; refresh.onTap = async () => { const result = await refreshAll(items, true); await rebuild(); table.reload(); await alert("Refresh complete", `${result.changed} changed • ${result.failed} failed`); }; table.addRow(actions);
+
     if (!items.length) { const row = new UITableRow(); row.height = 90; row.addText("Nothing to show", "Tap Add to watch a product."); table.addRow(row); return; }
-    const visible = items.slice().sort((a, b) => { const ax = Analytics.analyse(a), bx = Analytics.analyse(b); return Number(b.favourite) - Number(a.favourite) || bx.score - ax.score; });
-    for (const item of visible) {
-      const x = Analytics.analyse(item); const row = new UITableRow(); row.height = 82; row.dismissOnSelect = false;
+
+    const summary = [
+      ["🔥 Great deals", radar.greatDeals],
+      ["📉 Price drops", radar.priceDrops],
+      ["🎯 Targets reached", radar.targetsReached],
+      ["🏆 All-time lows", radar.allTimeLows]
+    ];
+    for (const [label, value] of summary) { const row = new UITableRow(); row.height = 38; row.addText(label, String(value)); table.addRow(row); }
+
+    const savings = new UITableRow(); savings.height = 44;
+    const currency = items[0] && items[0].currency ? items[0].currency : "GBP";
+    savings.addText("💰 Potential savings", money(radar.totalPotentialSavings, currency)); table.addRow(savings);
+
+    if (radar.topDeals.length) {
+      const top = new UITableRow(); top.isHeader = true; top.height = 38; top.addText("Top deals", "Best opportunities right now"); table.addRow(top);
+      for (const entry of radar.topDeals) {
+        const item = entry.item, x = entry.insight; const row = new UITableRow(); row.height = 82; row.dismissOnSelect = false;
+        const image = await cachedImage(item); if (image) row.addImage(image).widthWeight = 18;
+        const info = row.addText(`${item.favourite ? "★ " : ""}${item.title}`, `${item.store} • ${radarReason(entry)}`); info.widthWeight = 57; info.titleFont = Font.semiboldSystemFont(14); info.subtitleFont = Font.systemFont(11);
+        const price = row.addText(money(item.currentPrice, item.currency), `${"★".repeat(x.stars)} ${x.score}/100`); price.widthWeight = 25; price.rightAligned(); price.titleFont = Font.boldSystemFont(16); price.subtitleFont = Font.systemFont(10);
+        row.onSelect = async () => { await productMenu(item, items); await rebuild(); table.reload(); }; table.addRow(row);
+      }
+    }
+
+    const allHeader = new UITableRow(); allHeader.isHeader = true; allHeader.height = 38; allHeader.addText("All products", "Ranked by deal score"); table.addRow(allHeader);
+    const visible = radar.entries.slice().sort((a, b) => Number(b.item.favourite) - Number(a.item.favourite) || b.insight.score - a.insight.score);
+    for (const entry of visible) {
+      const item = entry.item, x = entry.insight; const row = new UITableRow(); row.height = 76; row.dismissOnSelect = false;
       const image = await cachedImage(item); if (image) row.addImage(image).widthWeight = 18;
       const info = row.addText(`${item.favourite ? "★ " : ""}${item.title}`, `${item.collection ? item.collection + " • " : ""}${item.store} • ${x.label}`); info.widthWeight = 57; info.titleFont = Font.semiboldSystemFont(14); info.subtitleFont = Font.systemFont(11);
       const price = row.addText(money(item.currentPrice, item.currency), `${"★".repeat(x.stars)} ${x.score}/100`); price.widthWeight = 25; price.rightAligned(); price.titleFont = Font.boldSystemFont(16); price.subtitleFont = Font.systemFont(10);
