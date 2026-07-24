@@ -1,7 +1,7 @@
 const fm = FileManager.iCloud();
 const dir = fm.documentsDirectory();
 const BASE = "https://raw.githubusercontent.com/djmoorhouse/scriptable-price-watcher/main/";
-const REQUIRED = ["PW_App.js", "PW_Storage.js", "PW_Scraper.js", "PW_Analytics.js"];
+const REQUIRED = ["PW_App.js", "PW_Storage.js", "PW_Scraper.js", "PW_Analytics.js", "PW_Radar.js"];
 
 for (const name of REQUIRED) {
   const path = fm.joinPath(dir, name);
