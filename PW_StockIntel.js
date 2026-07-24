@@ -9,6 +9,16 @@ if (!globalThis.__PW_ALERT_TEXT_FIELD_PATCHED__) {
   globalThis.__PW_ALERT_TEXT_FIELD_PATCHED__ = true;
 }
 
+// Keep the Add Product URL box empty rather than pre-filling it from the clipboard.
+if (!globalThis.__PW_ADD_PRODUCT_FIELD_PATCHED__) {
+  const originalAddTextField = Alert.prototype.addTextField;
+  Alert.prototype.addTextField = function(placeholder, value) {
+    const initialValue = placeholder === "https://…" ? "" : value;
+    return originalAddTextField.call(this, placeholder, initialValue == null ? "" : String(initialValue));
+  };
+  globalThis.__PW_ADD_PRODUCT_FIELD_PATCHED__ = true;
+}
+
 function daysBetween(a, b) {
   const start = new Date(a).getTime();
   const end = new Date(b).getTime();
