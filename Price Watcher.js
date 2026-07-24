@@ -7,6 +7,7 @@ const REQUIRED = [
   "PW_Scraper.js",
   "PW_Analytics.js",
   "PW_Radar.js",
+  "PW_RetailerIntel.js",
   "PW_Updater.js",
   "PW_Briefing.js"
 ];
