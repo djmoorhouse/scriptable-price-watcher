@@ -1,11 +1,12 @@
-// One-tap installer for Scriptable Price Watcher v0.6.0
+// One-tap installer for Scriptable Price Watcher v0.7.0
 const BASE = "https://raw.githubusercontent.com/djmoorhouse/scriptable-price-watcher/main/";
 const FILES = [
   "Price Watcher.js",
   "PW_App.js",
   "PW_Storage.js",
   "PW_Scraper.js",
-  "PW_Analytics.js"
+  "PW_Analytics.js",
+  "PW_Radar.js"
 ];
 const fm = FileManager.iCloud();
 const dir = fm.documentsDirectory();
@@ -19,8 +20,8 @@ for (const name of FILES) {
 }
 
 const a = new Alert();
-a.title = "Price Watcher v0.6.0 installed";
-a.message = "The modular app, analytics engine and supporting files are up to date. Open ‘Price Watcher’ in Scriptable and run it.";
+a.title = "Price Watcher v0.7.0 installed";
+a.message = "Deal Radar, Analytics and all supporting modules are installed. Open 'Price Watcher' and run it.";
 a.addAction("OK");
 await a.presentAlert();
 Script.complete();
