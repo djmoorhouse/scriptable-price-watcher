@@ -27,18 +27,14 @@ async function promptForProduct() {
   a.addCancelAction("Cancel");
   if (await a.presentAlert() === -1) return null;
 
-  const rawUrl = a.textFieldValue(0).trim();
-  if (!/^https?:\/\//i.test(rawUrl)) {
+  const rawUrl = a.textFieldValue(0)
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim();
+  if (!/^https?:\/\/[^\s]+$/i.test(rawUrl)) {
     await alert("Invalid URL", "Paste a complete URL beginning with http:// or https://");
     return null;
   }
-
-  let url;
-  try { url = new URL(rawUrl).href; }
-  catch (_) {
-    await alert("Invalid URL", "That web address could not be read.");
-    return null;
-  }
+  const url = rawUrl;
 
   const targetText = a.textFieldValue(1).trim().replace(",", ".");
   const targetPrice = targetText ? Number(targetText) : null;
@@ -46,10 +42,6 @@ async function promptForProduct() {
     await alert("Invalid target", "Enter only a number, or leave the target blank.");
     return null;
   }
-
-  const progress = new Notification();
-  progress.title = "Price Watcher";
-  progress.body = "Reading product page…";
 
   try {
     const details = await Scraper.scrape(url);
