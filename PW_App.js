@@ -2,7 +2,7 @@ const Storage = importModule("PW_Storage");
 const Scraper = importModule("PW_Scraper");
 const Analytics = importModule("PW_Analytics");
 const Radar = importModule("PW_Radar");
-const APP_VERSION = "0.6.1";
+const APP_VERSION = "0.7.0";
 
 function money(value, currency) {
   try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP" }).format(value); }
@@ -170,15 +170,88 @@ async function makeWidget(items) {
   return w;
 }
 
-function radarReason(entry) {
-  if (entry.targetReached) return "Target reached";
-  if (entry.allTimeLow) return "Lowest recorded price";
-  if (entry.dropped) return "Price dropped since last check";
-  return entry.insight.advice;
+function recommendation(entry) {
+  if (entry.targetReached || (entry.allTimeLow && entry.insight.score >= 70) || entry.insight.score >= 85) return "BUY";
+  if (entry.increased || entry.insight.score < 45) return "WAIT";
+  return "WATCH";
+}
+
+function trend(entry) {
+  if (entry.dropped) return "↓";
+  if (entry.increased) return "↑";
+  return "→";
+}
+
+function shortTitle(value, length = 48) {
+  const text = String(value || "Untitled product");
+  return text.length > length ? text.slice(0, length - 1) + "…" : text;
+}
+
+function drawLabel(ctx, text, rect, font, color, alignment = "left") {
+  ctx.setFont(font); ctx.setTextColor(color);
+  if (alignment === "right") ctx.setTextAlignedRight();
+  else if (alignment === "center") ctx.setTextAlignedCenter();
+  else ctx.setTextAlignedLeft();
+  ctx.drawTextInRect(String(text), rect);
+}
+
+function drawSparkline(ctx, item, rect, positive) {
+  const history = (item.history || []).slice(-20);
+  if (history.length < 2) {
+    ctx.setStrokeColor(new Color("555555")); ctx.setLineWidth(3);
+    const p = new Path(); p.move(new Point(rect.x, rect.y + rect.height / 2)); p.addLine(new Point(rect.x + rect.width, rect.y + rect.height / 2)); ctx.addPath(p); ctx.strokePath();
+    return;
+  }
+  const values = history.map(x => Number(x.price)).filter(Number.isFinite);
+  if (values.length < 2) return;
+  let min = Math.min(...values), max = Math.max(...values); if (min === max) { min -= 1; max += 1; }
+  const p = new Path();
+  values.forEach((value, i) => {
+    const x = rect.x + rect.width * i / (values.length - 1);
+    const y = rect.y + (max - value) / (max - min) * rect.height;
+    if (!i) p.move(new Point(x, y)); else p.addLine(new Point(x, y));
+  });
+  ctx.addPath(p); ctx.setStrokeColor(new Color(positive ? "55d66b" : "f3b33d")); ctx.setLineWidth(4); ctx.strokePath();
+}
+
+async function productCard(entry) {
+  const item = entry.item, x = entry.insight;
+  const width = 720, height = 300;
+  const ctx = new DrawContext(); ctx.size = new Size(width, height); ctx.opaque = true; ctx.respectScreenScale = true;
+  ctx.setFillColor(new Color("161616")); ctx.fillRect(new Rect(0, 0, width, height));
+  ctx.setFillColor(new Color("242424")); ctx.fillRect(new Rect(12, 12, width - 24, height - 24));
+
+  const image = await cachedImage(item);
+  if (image) ctx.drawImageInRect(image, new Rect(28, 34, 182, 182));
+  else { ctx.setFillColor(new Color("333333")); ctx.fillRect(new Rect(28, 34, 182, 182)); drawLabel(ctx, "No image", new Rect(28, 108, 182, 32), Font.systemFont(18), new Color("999999"), "center"); }
+
+  drawLabel(ctx, `${item.favourite ? "★ " : ""}${shortTitle(item.title)}`, new Rect(230, 28, 462, 56), Font.boldSystemFont(24), Color.white());
+  drawLabel(ctx, `${item.store}${item.collection ? " • " + item.collection : ""}`, new Rect(230, 82, 300, 28), Font.systemFont(15), new Color("aaaaaa"));
+  drawLabel(ctx, money(item.currentPrice, item.currency), new Rect(230, 112, 270, 42), Font.boldSystemFont(30), Color.white());
+  drawLabel(ctx, `${trend(entry)}  ${recommendation(entry)}`, new Rect(500, 116, 174, 34), Font.boldSystemFont(22), new Color(recommendation(entry) === "BUY" ? "55d66b" : recommendation(entry) === "WAIT" ? "f3b33d" : "6db5ff"), "right");
+
+  drawLabel(ctx, `${"★".repeat(x.stars)}  ${x.score}/100`, new Rect(230, 158, 240, 30), Font.boldSystemFont(18), new Color("f3cc4b"));
+  drawLabel(ctx, `${x.daysTracked} day${x.daysTracked === 1 ? "" : "s"} tracked`, new Rect(470, 160, 204, 28), Font.systemFont(15), new Color("aaaaaa"), "right");
+
+  let badgeX = 230;
+  if (entry.allTimeLow) { ctx.setFillColor(new Color("1f5a31")); ctx.fillRect(new Rect(badgeX, 196, 154, 32)); drawLabel(ctx, "LOWEST PRICE", new Rect(badgeX, 201, 154, 24), Font.boldSystemFont(13), Color.white(), "center"); badgeX += 164; }
+  if (entry.targetReached) { ctx.setFillColor(new Color("674d13")); ctx.fillRect(new Rect(badgeX, 196, 164, 32)); drawLabel(ctx, "TARGET REACHED", new Rect(badgeX, 201, 164, 24), Font.boldSystemFont(13), Color.white(), "center"); }
+
+  drawSparkline(ctx, item, new Rect(230, 244, 444, 30), entry.dropped || entry.allTimeLow);
+  drawLabel(ctx, "PRICE HISTORY", new Rect(28, 238, 182, 24), Font.boldSystemFont(12), new Color("777777"));
+  drawLabel(ctx, entry.dropped ? "Price dropped" : entry.increased ? "Price increased" : "Price steady", new Rect(28, 261, 182, 24), Font.systemFont(14), new Color("bbbbbb"));
+  return ctx.getImage();
+}
+
+async function addCardRow(table, entry, items, rebuild) {
+  const row = new UITableRow(); row.height = 164; row.dismissOnSelect = false;
+  const image = row.addImage(await productCard(entry)); image.widthWeight = 100;
+  row.onSelect = async () => { await productMenu(entry.item, items); await rebuild(); table.reload(); };
+  table.addRow(row);
 }
 
 async function dashboard(items) {
-  const table = new UITable(); table.showSeparators = true;
+  const table = new UITable(); table.showSeparators = false;
   async function rebuild() {
     table.removeAllRows();
     const radar = Radar.analyseAll(items);
@@ -192,38 +265,20 @@ async function dashboard(items) {
 
     if (!items.length) { const row = new UITableRow(); row.height = 90; row.addText("Nothing to show", "Tap Add to watch a product."); table.addRow(row); return; }
 
-    const summary = [
-      ["🔥 Great deals", radar.greatDeals],
-      ["📉 Price drops", radar.priceDrops],
-      ["🎯 Targets reached", radar.targetsReached],
-      ["🏆 All-time lows", radar.allTimeLows]
-    ];
-    for (const [label, value] of summary) { const row = new UITableRow(); row.height = 38; row.addText(label, String(value)); table.addRow(row); }
-
-    const savings = new UITableRow(); savings.height = 44;
+    const summary = new UITableRow(); summary.height = 62;
+    summary.addText(`🔥 ${radar.greatDeals} great`, `📉 ${radar.priceDrops} drops`).widthWeight = 34;
+    summary.addText(`🎯 ${radar.targetsReached} targets`, `🏆 ${radar.allTimeLows} lows`).widthWeight = 34;
     const currency = items[0] && items[0].currency ? items[0].currency : "GBP";
-    savings.addText("💰 Potential savings", money(radar.totalPotentialSavings, currency)); table.addRow(savings);
+    const saved = summary.addText(money(radar.totalPotentialSavings, currency), "potential saving"); saved.widthWeight = 32; saved.rightAligned(); table.addRow(summary);
 
     if (radar.topDeals.length) {
       const top = new UITableRow(); top.isHeader = true; top.height = 38; top.addText("Top deals", "Best opportunities right now"); table.addRow(top);
-      for (const entry of radar.topDeals) {
-        const item = entry.item, x = entry.insight; const row = new UITableRow(); row.height = 82; row.dismissOnSelect = false;
-        const image = await cachedImage(item); if (image) row.addImage(image).widthWeight = 18;
-        const info = row.addText(`${item.favourite ? "★ " : ""}${item.title}`, `${item.store} • ${radarReason(entry)}`); info.widthWeight = 57; info.titleFont = Font.semiboldSystemFont(14); info.subtitleFont = Font.systemFont(11);
-        const price = row.addText(money(item.currentPrice, item.currency), `${"★".repeat(x.stars)} ${x.score}/100`); price.widthWeight = 25; price.rightAligned(); price.titleFont = Font.boldSystemFont(16); price.subtitleFont = Font.systemFont(10);
-        row.onSelect = async () => { await productMenu(item, items); await rebuild(); table.reload(); }; table.addRow(row);
-      }
+      for (const entry of radar.topDeals) await addCardRow(table, entry, items, rebuild);
     }
 
     const allHeader = new UITableRow(); allHeader.isHeader = true; allHeader.height = 38; allHeader.addText("All products", "Ranked by deal score"); table.addRow(allHeader);
     const visible = radar.entries.slice().sort((a, b) => Number(b.item.favourite) - Number(a.item.favourite) || b.insight.score - a.insight.score);
-    for (const entry of visible) {
-      const item = entry.item, x = entry.insight; const row = new UITableRow(); row.height = 76; row.dismissOnSelect = false;
-      const image = await cachedImage(item); if (image) row.addImage(image).widthWeight = 18;
-      const info = row.addText(`${item.favourite ? "★ " : ""}${item.title}`, `${item.collection ? item.collection + " • " : ""}${item.store} • ${x.label}`); info.widthWeight = 57; info.titleFont = Font.semiboldSystemFont(14); info.subtitleFont = Font.systemFont(11);
-      const price = row.addText(money(item.currentPrice, item.currency), `${"★".repeat(x.stars)} ${x.score}/100`); price.widthWeight = 25; price.rightAligned(); price.titleFont = Font.boldSystemFont(16); price.subtitleFont = Font.systemFont(10);
-      row.onSelect = async () => { await productMenu(item, items); await rebuild(); table.reload(); }; table.addRow(row);
-    }
+    for (const entry of visible) await addCardRow(table, entry, items, rebuild);
   }
   await rebuild(); await table.present(true);
 }
