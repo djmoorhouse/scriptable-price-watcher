@@ -1,6 +1,6 @@
 {
   "app": "Price Watcher",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "minimumInstallerVersion": "1.0.0",
   "entryPoint": "Price Watcher.js",
   "files": [
@@ -10,6 +10,15 @@
     "PW_Scraper.js",
     "PW_Analytics.js",
     "PW_Radar.js",
+    "PW_RetailerIntel.js",
+    "PW_Updater.js",
+    "PW_Briefing.js",
     "Install Price Watcher.js"
+  ],
+  "releaseNotes": [
+    "Added retailer-specific BUY, WATCH and WAIT intelligence.",
+    "Added Deal Radar daily briefing.",
+    "Added automatic module updates.",
+    "Expanded installer and launcher checks for all required modules."
   ]
 }
