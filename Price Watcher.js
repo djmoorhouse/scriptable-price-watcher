@@ -1,5 +1,6 @@
 const Storage = importModule("PW_Storage");
 const Scraper = importModule("PW_Scraper");
+const APP_VERSION = "0.2.0";
 
 function money(value, currency) {
   try {
@@ -7,6 +8,17 @@ function money(value, currency) {
   } catch (_) {
     return `${currency || "GBP"} ${Number(value).toFixed(2)}`;
   }
+}
+
+function storeName(url) {
+  const host = String(url || "").replace(/^https?:\/\//i, "").split("/")[0].replace(/^www\./i, "");
+  const name = host.split(".")[0] || "shop";
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function percentChange(from, to) {
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from === 0) return null;
+  return ((to - from) / from) * 100;
 }
 
 async function alert(title, message) {
@@ -27,14 +39,11 @@ async function promptForProduct() {
   a.addCancelAction("Cancel");
   if (await a.presentAlert() === -1) return null;
 
-  const rawUrl = a.textFieldValue(0)
-    .replace(/[\u200B-\u200D\uFEFF]/g, "")
-    .trim();
+  const rawUrl = a.textFieldValue(0).replace(/[\u200B-\u200D\uFEFF]/g, "").trim();
   if (!/^https?:\/\/[^\s]+$/i.test(rawUrl)) {
     await alert("Invalid URL", "Paste a complete URL beginning with http:// or https://");
     return null;
   }
-  const url = rawUrl;
 
   const targetText = a.textFieldValue(1).trim().replace(",", ".");
   const targetPrice = targetText ? Number(targetText) : null;
@@ -44,14 +53,16 @@ async function promptForProduct() {
   }
 
   try {
-    const details = await Scraper.scrape(url);
+    const details = await Scraper.scrape(rawUrl);
     const now = new Date().toISOString();
     return {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      url,
+      url: rawUrl,
+      store: storeName(rawUrl),
       title: details.title,
       imageUrl: details.imageUrl,
       currency: details.currency,
+      initialPrice: details.price,
       currentPrice: details.price,
       previousPrice: null,
       lowestPrice: details.price,
@@ -66,10 +77,41 @@ async function promptForProduct() {
   }
 }
 
+async function editTarget(item) {
+  const a = new Alert();
+  a.title = "Target price";
+  a.message = "Enter the price at which you want to be notified. Leave blank to remove the target.";
+  a.addTextField("Target price", Number.isFinite(item.targetPrice) ? String(item.targetPrice) : "");
+  a.addAction("Save");
+  a.addCancelAction("Cancel");
+  if (await a.presentAlert() === -1) return false;
+  const text = a.textFieldValue(0).trim().replace(",", ".");
+  if (!text) {
+    item.targetPrice = null;
+    return true;
+  }
+  const value = Number(text);
+  if (!Number.isFinite(value) || value <= 0) {
+    await alert("Invalid target", "Enter only a positive number.");
+    return false;
+  }
+  item.targetPrice = value;
+  return true;
+}
+
+function historyText(item) {
+  const history = Array.isArray(item.history) ? item.history : [];
+  const recent = history.slice(-10).reverse();
+  if (!recent.length) return "No history recorded yet.";
+  return recent.map(entry => `${new Date(entry.date).toLocaleDateString()}  ${money(entry.price, item.currency)}`).join("\n");
+}
+
 async function refreshItem(item, notify = true) {
   const details = await Scraper.scrape(item.url);
   const oldPrice = item.currentPrice;
   const newPrice = details.price;
+  item.store = item.store || storeName(item.url);
+  item.initialPrice = Number.isFinite(item.initialPrice) ? item.initialPrice : oldPrice;
   item.title = details.title || item.title;
   item.imageUrl = details.imageUrl || item.imageUrl;
   item.currency = details.currency || item.currency;
@@ -77,8 +119,10 @@ async function refreshItem(item, notify = true) {
   item.currentPrice = newPrice;
   item.lowestPrice = Math.min(item.lowestPrice ?? newPrice, newPrice);
   item.checkedAt = new Date().toISOString();
+  item.lastError = null;
   item.history = Array.isArray(item.history) ? item.history : [];
-  item.history.push({ date: item.checkedAt, price: newPrice });
+  const last = item.history[item.history.length - 1];
+  if (!last || last.price !== newPrice) item.history.push({ date: item.checkedAt, price: newPrice });
   item.history = item.history.slice(-100);
 
   const dropped = Number.isFinite(oldPrice) && newPrice < oldPrice;
@@ -125,7 +169,6 @@ async function makeWidget(items) {
   const w = new ListWidget();
   w.backgroundColor = new Color("111111");
   w.setPadding(12, 12, 12, 12);
-
   const heading = w.addText("PRICE WATCHER");
   heading.font = Font.boldSystemFont(11);
   heading.textColor = new Color("aaaaaa");
@@ -141,7 +184,6 @@ async function makeWidget(items) {
   const parameter = Number(args.widgetParameter);
   const item = Number.isInteger(parameter) && items[parameter] ? items[parameter] : items[0];
   w.url = item.url;
-
   const row = w.addStack();
   row.layoutHorizontally();
   const image = await loadImage(item.imageUrl);
@@ -154,21 +196,24 @@ async function makeWidget(items) {
 
   const text = row.addStack();
   text.layoutVertically();
+  const shop = text.addText((item.store || storeName(item.url)).toUpperCase());
+  shop.font = Font.boldSystemFont(9);
+  shop.textColor = new Color("888888");
   const title = text.addText(item.title);
   title.font = Font.semiboldSystemFont(13);
   title.textColor = Color.white();
   title.lineLimit = 2;
   text.addSpacer(5);
-
   const price = text.addText(money(item.currentPrice, item.currency));
   price.font = Font.boldSystemFont(20);
   price.textColor = Color.white();
 
-  if (Number.isFinite(item.previousPrice) && item.previousPrice !== item.currentPrice) {
-    const difference = item.currentPrice - item.previousPrice;
-    const change = text.addText(`${difference < 0 ? "↓" : "↑"} ${money(Math.abs(difference), item.currency)}`);
+  const base = Number.isFinite(item.initialPrice) ? item.initialPrice : item.previousPrice;
+  const changePct = percentChange(base, item.currentPrice);
+  if (Number.isFinite(changePct) && Math.abs(changePct) >= 0.01) {
+    const change = text.addText(`${changePct < 0 ? "↓" : "↑"} ${Math.abs(changePct).toFixed(1)}% since added`);
     change.font = Font.systemFont(11);
-    change.textColor = difference < 0 ? new Color("55d66b") : new Color("ff6b6b");
+    change.textColor = changePct < 0 ? new Color("55d66b") : new Color("ff6b6b");
   } else if (Number.isFinite(item.targetPrice)) {
     const target = text.addText(`Target ${money(item.targetPrice, item.currency)}`);
     target.font = Font.systemFont(11);
@@ -191,12 +236,47 @@ async function chooseItem(items, title) {
   return index >= 0 ? index : null;
 }
 
+async function productMenu(item, items) {
+  while (true) {
+    const initial = Number.isFinite(item.initialPrice) ? item.initialPrice : item.currentPrice;
+    const pct = percentChange(initial, item.currentPrice);
+    const a = new Alert();
+    a.title = item.title;
+    a.message = `${item.store || storeName(item.url)}\n\nCurrent: ${money(item.currentPrice, item.currency)}\nLowest: ${money(item.lowestPrice, item.currency)}\nAdded at: ${money(initial, item.currency)}${Number.isFinite(pct) ? `\nChange: ${pct >= 0 ? "+" : ""}${pct.toFixed(1)}%` : ""}${Number.isFinite(item.targetPrice) ? `\nTarget: ${money(item.targetPrice, item.currency)}` : "\nTarget: Not set"}`;
+    a.addAction("Refresh now");
+    a.addAction("Edit target price");
+    a.addAction("Price history");
+    a.addAction("Open product page");
+    a.addCancelAction("Back");
+    const action = await a.presentAlert();
+    if (action === -1) return;
+    if (action === 0) {
+      try {
+        await refreshItem(item, true);
+        await Storage.save(items);
+        await alert("Updated", money(item.currentPrice, item.currency));
+      } catch (e) {
+        await alert("Refresh failed", String(e.message || e));
+      }
+    } else if (action === 1) {
+      if (await editTarget(item)) {
+        await Storage.save(items);
+        await alert("Target saved", Number.isFinite(item.targetPrice) ? money(item.targetPrice, item.currency) : "Target removed");
+      }
+    } else if (action === 2) {
+      await alert("Price history", historyText(item));
+    } else if (action === 3) {
+      Safari.open(item.url);
+    }
+  }
+}
+
 async function runApp() {
   let items = await Storage.load();
   while (true) {
     const menu = new Alert();
     menu.title = "Price Watcher";
-    menu.message = items.length ? `${items.length} product${items.length === 1 ? "" : "s"} being watched` : "No products added yet";
+    menu.message = items.length ? `${items.length} product${items.length === 1 ? "" : "s"} being watched\nVersion ${APP_VERSION}` : `No products added yet\nVersion ${APP_VERSION}`;
     menu.addAction("Add product");
     if (items.length) {
       menu.addAction("View products");
@@ -216,26 +296,7 @@ async function runApp() {
       }
     } else if (choice === 1) {
       const index = await chooseItem(items, "Products");
-      if (index !== null) {
-        const item = items[index];
-        const a = new Alert();
-        a.title = item.title;
-        a.message = `Current: ${money(item.currentPrice, item.currency)}\nLowest: ${money(item.lowestPrice, item.currency)}${Number.isFinite(item.targetPrice) ? `\nTarget: ${money(item.targetPrice, item.currency)}` : ""}`;
-        a.addAction("Open product page");
-        a.addAction("Refresh now");
-        a.addCancelAction("Back");
-        const action = await a.presentAlert();
-        if (action === 0) Safari.open(item.url);
-        if (action === 1) {
-          try {
-            await refreshItem(item, true);
-            await Storage.save(items);
-            await alert("Updated", money(item.currentPrice, item.currency));
-          } catch (e) {
-            await alert("Refresh failed", String(e.message || e));
-          }
-        }
-      }
+      if (index !== null) await productMenu(items[index], items);
     } else if (choice === 2) {
       const result = await refreshAll(items, true);
       await alert("Refresh complete", `${result.changed} price change${result.changed === 1 ? "" : "s"}.\n${result.failed} failed.`);
@@ -253,8 +314,7 @@ async function runApp() {
 let items = await Storage.load();
 if (config.runsInWidget) {
   await refreshAll(items, true);
-  const widget = await makeWidget(items);
-  Script.setWidget(widget);
+  Script.setWidget(await makeWidget(items));
 } else {
   await runApp();
 }
