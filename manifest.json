@@ -1,6 +1,6 @@
 {
   "app": "Price Watcher",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "minimumInstallerVersion": "1.0.0",
   "entryPoint": "Price Watcher.js",
   "files": [
@@ -17,5 +17,7 @@
     "Install Price Watcher.js"
   ],
   "releaseNotes": [
-    "Added stock history and stock event tracking.",
-    "Added tracked-size availability and restock intelligence.",
+    "Fixed optional Add Product fields returning null on some Scriptable versions.",
+    "The Add Product URL field now opens empty instead of using clipboard contents."
+  ]
+}
