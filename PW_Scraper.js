@@ -20,12 +20,26 @@ function currencyFrom(value, text) {
 }
 
 function normaliseSize(value) {
-  return String(value || "")
-    .toUpperCase()
-    .replace(/^UK\s*/i, "")
-    .replace(/^SIZE\s*/i, "")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(value || "").toUpperCase().replace(/^UK\s*/i, "").replace(/^SIZE\s*/i, "").replace(/\s+/g, " ").trim();
+}
+
+function lowStockFrom(text, wanted) {
+  const source = String(text || "");
+  const escaped = String(wanted || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [
+    new RegExp(`(?:UK\\s*)?${escaped}.{0,80}?(?:only|just)\\s+(\\d+)\\s+(?:left|remaining|in stock)`, "i"),
+    new RegExp(`(?:only|just)\\s+(\\d+)\\s+(?:left|remaining|in stock).{0,80}?(?:UK\\s*)?${escaped}`, "i"),
+    /(?:only|just)\s+(\d+)\s+(?:left|remaining|in stock)/i,
+    /(\d+)\s+(?:left|remaining)/i
+  ];
+  for (const pattern of patterns) {
+    const match = source.match(pattern);
+    if (match) {
+      const quantity = Number(match[1]);
+      if (Number.isInteger(quantity) && quantity > 0 && quantity <= 20) return quantity;
+    }
+  }
+  return null;
 }
 
 async function scrape(url, trackedSize = "") {
@@ -73,28 +87,15 @@ async function scrape(url, trackedSize = "") {
 
     const sizePattern = /^(?:UK\s*)?(?:SIZE\s*)?(?:[2-9]|1[0-9]|2[0-8]|XXS|XS|S|M|L|XL|XXL|XXXL)$/i;
     const candidates = [];
-    const selectors = [
-      'button', 'option', '[role="option"]', '[role="radio"]',
-      '[data-testid*="size"]', '[data-test*="size"]', '[class*="size"]'
-    ];
+    const selectors = ['button','option','[role="option"]','[role="radio"]','[data-testid*="size"]','[data-test*="size"]','[class*="size"]'];
     document.querySelectorAll(selectors.join(',')).forEach(el => {
-      const raw = String(
-        el.getAttribute('data-size') ||
-        el.getAttribute('data-value') ||
-        el.getAttribute('value') ||
-        el.getAttribute('aria-label') ||
-        el.textContent || ''
-      ).replace(/\s+/g, ' ').trim();
+      const raw = String(el.getAttribute('data-size') || el.getAttribute('data-value') || el.getAttribute('value') || el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim();
       const match = raw.match(/(?:UK\s*)?(?:SIZE\s*)?(XXXL|XXL|XXS|XL|XS|[SML]|2[0-8]|1[0-9]|[2-9])/i);
       if (!match) return;
       const label = match[0].replace(/^SIZE\s*/i, '').trim();
       if (!sizePattern.test(label)) return;
       const classText = String(el.className || '');
-      const unavailable = el.disabled ||
-        el.getAttribute('aria-disabled') === 'true' ||
-        el.getAttribute('aria-selected') === 'false' && /sold|unavailable|disabled|out.of.stock/i.test(raw + ' ' + classText) ||
-        /sold.?out|unavailable|disabled|out.?of.?stock|not.?available/i.test(raw + ' ' + classText) ||
-        el.hasAttribute('disabled');
+      const unavailable = el.disabled || el.getAttribute('aria-disabled') === 'true' || /sold.?out|unavailable|disabled|out.?of.?stock|not.?available/i.test(raw + ' ' + classText) || el.hasAttribute('disabled');
       candidates.push({ label, available: !unavailable });
     });
 
@@ -134,16 +135,25 @@ async function scrape(url, trackedSize = "") {
   const wanted = normaliseSize(trackedSize);
   const sizes = Array.isArray(data.sizes) ? data.sizes : [];
   const selected = wanted ? sizes.find(x => normaliseSize(x.label) === wanted) : null;
+  const availableSizes = sizes.filter(x => x.available).map(x => x.label);
+  const lowStockQuantity = wanted ? lowStockFrom(data.text, wanted) : null;
+  const scarcity = selected && selected.available && sizes.length
+    ? availableSizes.length <= 2 ? "very-low" : availableSizes.length <= Math.max(3, Math.ceil(sizes.length * 0.35)) ? "low" : "normal"
+    : null;
 
   return {
     title: String(data.title || new URL(url).hostname).trim(),
     imageUrl: data.image || "",
     currency: currencyFrom(data.currency, data.text),
     price,
-    availableSizes: sizes.filter(x => x.available).map(x => x.label),
+    availableSizes,
     allSizes: sizes,
     sizeChecked: Boolean(wanted),
-    sizeAvailable: selected ? selected.available : null
+    sizeAvailable: selected ? selected.available : null,
+    lowStockQuantity,
+    scarcity,
+    availableSizeCount: availableSizes.length,
+    totalSizeCount: sizes.length
   };
 }
 
