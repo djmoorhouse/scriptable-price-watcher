@@ -1,4 +1,5 @@
 const Analytics = importModule("PW_Analytics");
+const RetailerIntel = importModule("PW_RetailerIntel");
 
 function number(value, fallback = 0) {
   const n = Number(value);
@@ -8,6 +9,7 @@ function number(value, fallback = 0) {
 function analyseAll(items) {
   const entries = (Array.isArray(items) ? items : []).map(item => {
     const insight = Analytics.analyse(item);
+    const retailerInsight = RetailerIntel.analyse(item, insight);
     const current = number(item.currentPrice);
     const previous = number(item.previousPrice, current);
     const initial = number(item.initialPrice, current);
@@ -16,6 +18,7 @@ function analyseAll(items) {
     return {
       item,
       insight,
+      retailerInsight,
       current,
       previous,
       initial,
