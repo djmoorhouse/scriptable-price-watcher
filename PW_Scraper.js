@@ -19,7 +19,16 @@ function currencyFrom(value, text) {
   return "GBP";
 }
 
-async function scrape(url) {
+function normaliseSize(value) {
+  return String(value || "")
+    .toUpperCase()
+    .replace(/^UK\s*/i, "")
+    .replace(/^SIZE\s*/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function scrape(url, trackedSize = "") {
   const web = new WebView();
   const req = new Request(url);
   req.timeoutInterval = 30;
@@ -28,7 +37,7 @@ async function scrape(url) {
     "Accept-Language": "en-GB,en;q=0.9"
   };
   await web.loadRequest(req);
-  await new Promise(resolve => Timer.schedule(2, false, resolve));
+  await new Promise(resolve => Timer.schedule(3, false, resolve));
 
   const data = await web.evaluateJavaScript(`(() => {
     const meta = sels => {
@@ -61,11 +70,49 @@ async function scrape(url) {
     if (image && typeof image === 'object') image = image.url || image.contentUrl;
     image = image || meta(['meta[property="og:image"]','meta[name="twitter:image"]']);
     try { image = image ? new URL(image, document.baseURI).href : ''; } catch (_) {}
+
+    const sizePattern = /^(?:UK\s*)?(?:SIZE\s*)?(?:[2-9]|1[0-9]|2[0-8]|XXS|XS|S|M|L|XL|XXL|XXXL)$/i;
+    const candidates = [];
+    const selectors = [
+      'button', 'option', '[role="option"]', '[role="radio"]',
+      '[data-testid*="size"]', '[data-test*="size"]', '[class*="size"]'
+    ];
+    document.querySelectorAll(selectors.join(',')).forEach(el => {
+      const raw = String(
+        el.getAttribute('data-size') ||
+        el.getAttribute('data-value') ||
+        el.getAttribute('value') ||
+        el.getAttribute('aria-label') ||
+        el.textContent || ''
+      ).replace(/\s+/g, ' ').trim();
+      const match = raw.match(/(?:UK\s*)?(?:SIZE\s*)?(XXXL|XXL|XXS|XL|XS|[SML]|2[0-8]|1[0-9]|[2-9])/i);
+      if (!match) return;
+      const label = match[0].replace(/^SIZE\s*/i, '').trim();
+      if (!sizePattern.test(label)) return;
+      const classText = String(el.className || '');
+      const unavailable = el.disabled ||
+        el.getAttribute('aria-disabled') === 'true' ||
+        el.getAttribute('aria-selected') === 'false' && /sold|unavailable|disabled|out.of.stock/i.test(raw + ' ' + classText) ||
+        /sold.?out|unavailable|disabled|out.?of.?stock|not.?available/i.test(raw + ' ' + classText) ||
+        el.hasAttribute('disabled');
+      candidates.push({ label, available: !unavailable });
+    });
+
+    const deduped = [];
+    const seen = new Set();
+    for (const x of candidates) {
+      const key = String(x.label).toUpperCase().replace(/^UK\s*/, '').trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      deduped.push({ label: key, available: x.available });
+    }
+
     return {
       title: product.name || meta(['meta[property="og:title"]','meta[name="twitter:title"]']) || document.querySelector('h1')?.textContent || document.title,
       image,
       currency: offer.priceCurrency || meta(['meta[property="product:price:currency"]','meta[itemprop="priceCurrency"]']),
       prices: [offer.price, offer.lowPrice, meta(['meta[property="product:price:amount"]','meta[itemprop="price"]','[itemprop="price"]','[data-testid*="price"]','.price','.current-price'])],
+      sizes: deduped,
       text: (document.body?.innerText || '').slice(0, 150000)
     };
   })()`);
@@ -84,11 +131,19 @@ async function scrape(url) {
   }
   if (price === null) throw new Error("No price found on this page");
 
+  const wanted = normaliseSize(trackedSize);
+  const sizes = Array.isArray(data.sizes) ? data.sizes : [];
+  const selected = wanted ? sizes.find(x => normaliseSize(x.label) === wanted) : null;
+
   return {
     title: String(data.title || new URL(url).hostname).trim(),
     imageUrl: data.image || "",
     currency: currencyFrom(data.currency, data.text),
-    price
+    price,
+    availableSizes: sizes.filter(x => x.available).map(x => x.label),
+    allSizes: sizes,
+    sizeChecked: Boolean(wanted),
+    sizeAvailable: selected ? selected.available : null
   };
 }
 
