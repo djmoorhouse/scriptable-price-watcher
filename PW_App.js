@@ -2,7 +2,8 @@ const Storage = importModule("PW_Storage");
 const Scraper = importModule("PW_Scraper");
 const Analytics = importModule("PW_Analytics");
 const Radar = importModule("PW_Radar");
-const APP_VERSION = "0.7.0";
+const RetailerIntel = importModule("PW_RetailerIntel");
+const APP_VERSION = "0.8.0";
 
 function money(value, currency) {
   try { return new Intl.NumberFormat("en-GB", { style: "currency", currency: currency || "GBP" }).format(value); }
@@ -90,9 +91,9 @@ async function refreshItem(item, notify = true) {
   const dropped = Number.isFinite(oldPrice) && newPrice < oldPrice;
   const hitTarget = Number.isFinite(item.targetPrice) && newPrice <= item.targetPrice && oldPrice > item.targetPrice;
   if (notify && (dropped || hitTarget)) {
-    const insight = Analytics.analyse(item); const n = new Notification();
-    n.title = `${"★".repeat(insight.stars)} ${insight.label}`;
-    n.body = `${item.title}\n${money(oldPrice, item.currency)} → ${money(newPrice, item.currency)}\nDeal score ${insight.score}/100`;
+    const insight = Analytics.analyse(item); const intel = RetailerIntel.analyse(item, insight); const n = new Notification();
+    n.title = `${intel.action} • ${"★".repeat(insight.stars)} ${insight.label}`;
+    n.body = `${item.title}\n${money(oldPrice, item.currency)} → ${money(newPrice, item.currency)}\n${intel.advice}`;
     n.openURL = item.url; await n.schedule();
   }
 }
@@ -130,22 +131,24 @@ async function showHistory(item) {
 }
 
 async function showInsights(item) {
-  const x = Analytics.analyse(item); const table = new UITable(); table.showSeparators = true;
+  const x = Analytics.analyse(item); const intel = RetailerIntel.analyse(item, x); const table = new UITable(); table.showSeparators = true;
   const header = new UITableRow(); header.isHeader = true; header.height = 72;
-  const h = header.addText(`${"★".repeat(x.stars)} ${x.label}`, `${item.store} • Deal score ${x.score}/100`); h.titleFont = Font.boldSystemFont(21); h.subtitleFont = Font.systemFont(12); table.addRow(header);
+  const h = header.addText(`${intel.action} • ${"★".repeat(x.stars)} ${x.label}`, `${item.store} • ${intel.confidence} confidence • Deal score ${x.score}/100`); h.titleFont = Font.boldSystemFont(21); h.subtitleFont = Font.systemFont(12); table.addRow(header);
+  const retailerAdvice = new UITableRow(); retailerAdvice.height = 92; retailerAdvice.addText("Retailer intelligence", intel.advice); table.addRow(retailerAdvice);
   const advice = new UITableRow(); advice.height = 66; advice.addText(x.advice, x.reasons.join(" • ")); table.addRow(advice);
   const stats = [["Current", x.current], ["Lowest", x.lowest], ["Highest", x.highest], ["Average", x.average], ["Saving", x.saving]];
   for (const [label, value] of stats) { const row = new UITableRow(); row.height = 42; row.addText(label, money(value, item.currency)); table.addRow(row); }
-  const tracked = new UITableRow(); tracked.height = 42; tracked.addText("Tracking", `${x.daysTracked} days • ${x.changes} price changes`); table.addRow(tracked);
+  const discount = new UITableRow(); discount.height = 42; discount.addText("Discount from start", `${intel.discountPercent}%`); table.addRow(discount);
+  const tracked = new UITableRow(); tracked.height = 42; tracked.addText("Tracking", `${x.daysTracked} days • ${x.changes} price changes • ${intel.observations} observations`); table.addRow(tracked);
   const graph = new UITableRow(); graph.height = 48; graph.addText("View price graph", "Price history"); graph.onSelect = async () => await showHistory(item); table.addRow(graph);
   await table.present(true);
 }
 
 async function productMenu(item, items) {
   while (true) {
-    const x = Analytics.analyse(item); const a = new Alert();
+    const x = Analytics.analyse(item); const intel = RetailerIntel.analyse(item, x); const a = new Alert();
     a.title = `${item.favourite ? "★ " : ""}${item.title}`;
-    a.message = `${"★".repeat(x.stars)} ${x.label} • ${x.score}/100\n${x.advice}\n\nCurrent: ${money(item.currentPrice, item.currency)}\nLowest: ${money(x.lowest, item.currency)}${Number.isFinite(item.targetPrice) ? `\nTarget: ${money(item.targetPrice, item.currency)}` : ""}`;
+    a.message = `${intel.action} • ${intel.confidence} confidence\n${intel.advice}\n\n${"★".repeat(x.stars)} ${x.label} • ${x.score}/100\nCurrent: ${money(item.currentPrice, item.currency)}\nLowest: ${money(x.lowest, item.currency)}${Number.isFinite(item.targetPrice) ? `\nTarget: ${money(item.targetPrice, item.currency)}` : ""}`;
     a.addAction("View full insights"); a.addAction(item.favourite ? "Remove from favourites" : "Add to favourites"); a.addAction("Refresh now"); a.addAction("Edit target"); a.addAction("Edit collection"); a.addAction("Open product page"); a.addDestructiveAction("Remove product"); a.addCancelAction("Back");
     const choice = await a.presentAlert(); if (choice === -1) return;
     if (choice === 0) await showInsights(item);
@@ -162,15 +165,16 @@ async function makeWidget(items) {
   const w = new ListWidget(); w.backgroundColor = new Color("111111"); w.setPadding(12, 12, 12, 12);
   const heading = w.addText("PRICE WATCHER"); heading.font = Font.boldSystemFont(11); heading.textColor = new Color("aaaaaa"); w.addSpacer(8);
   if (!items.length) { w.addText("Run the script to add a product."); return w; }
-  const index = Number(args.widgetParameter); const item = Number.isInteger(index) && items[index] ? items[index] : items.find(x => x.favourite) || items[0]; const x = Analytics.analyse(item); w.url = item.url;
+  const index = Number(args.widgetParameter); const item = Number.isInteger(index) && items[index] ? items[index] : items.find(x => x.favourite) || items[0]; const x = Analytics.analyse(item); const intel = RetailerIntel.analyse(item, x); w.url = item.url;
   const row = w.addStack(); row.layoutHorizontally(); const image = await cachedImage(item); if (image) { const img = row.addImage(image); img.imageSize = new Size(62, 62); img.cornerRadius = 9; row.addSpacer(10); }
   const text = row.addStack(); text.layoutVertically(); const title = text.addText(item.title); title.font = Font.semiboldSystemFont(13); title.textColor = Color.white(); title.lineLimit = 2;
   text.addSpacer(5); const price = text.addText(money(item.currentPrice, item.currency)); price.font = Font.boldSystemFont(20); price.textColor = Color.white();
-  const status = text.addText(`${"★".repeat(x.stars)} ${x.label} • ${x.score}/100`); status.font = Font.systemFont(10); status.textColor = new Color("55d66b");
+  const status = text.addText(`${intel.action} • ${"★".repeat(x.stars)} ${x.score}/100`); status.font = Font.systemFont(10); status.textColor = new Color(intel.action === "BUY" ? "55d66b" : intel.action === "WAIT" ? "f3b33d" : "6db5ff");
   return w;
 }
 
 function recommendation(entry) {
+  if (entry.retailerInsight && entry.retailerInsight.action) return entry.retailerInsight.action;
   if (entry.targetReached || (entry.allTimeLow && entry.insight.score >= 70) || entry.insight.score >= 85) return "BUY";
   if (entry.increased || entry.insight.score < 45) return "WAIT";
   return "WATCH";
@@ -215,7 +219,7 @@ function drawSparkline(ctx, item, rect, positive) {
 }
 
 async function productCard(entry) {
-  const item = entry.item, x = entry.insight;
+  const item = entry.item, x = entry.insight, intel = entry.retailerInsight || RetailerIntel.analyse(item, x);
   const width = 720, height = 300;
   const ctx = new DrawContext(); ctx.size = new Size(width, height); ctx.opaque = true; ctx.respectScreenScale = true;
   ctx.setFillColor(new Color("161616")); ctx.fillRect(new Rect(0, 0, width, height));
@@ -226,12 +230,12 @@ async function productCard(entry) {
   else { ctx.setFillColor(new Color("333333")); ctx.fillRect(new Rect(28, 34, 182, 182)); drawLabel(ctx, "No image", new Rect(28, 108, 182, 32), Font.systemFont(18), new Color("999999"), "center"); }
 
   drawLabel(ctx, `${item.favourite ? "★ " : ""}${shortTitle(item.title)}`, new Rect(230, 28, 462, 56), Font.boldSystemFont(24), Color.white());
-  drawLabel(ctx, `${item.store}${item.collection ? " • " + item.collection : ""}`, new Rect(230, 82, 300, 28), Font.systemFont(15), new Color("aaaaaa"));
+  drawLabel(ctx, `${item.store}${item.collection ? " • " + item.collection : ""} • ${intel.confidence} confidence`, new Rect(230, 82, 420, 28), Font.systemFont(15), new Color("aaaaaa"));
   drawLabel(ctx, money(item.currentPrice, item.currency), new Rect(230, 112, 270, 42), Font.boldSystemFont(30), Color.white());
   drawLabel(ctx, `${trend(entry)}  ${recommendation(entry)}`, new Rect(500, 116, 174, 34), Font.boldSystemFont(22), new Color(recommendation(entry) === "BUY" ? "55d66b" : recommendation(entry) === "WAIT" ? "f3b33d" : "6db5ff"), "right");
 
   drawLabel(ctx, `${"★".repeat(x.stars)}  ${x.score}/100`, new Rect(230, 158, 240, 30), Font.boldSystemFont(18), new Color("f3cc4b"));
-  drawLabel(ctx, `${x.daysTracked} day${x.daysTracked === 1 ? "" : "s"} tracked`, new Rect(470, 160, 204, 28), Font.systemFont(15), new Color("aaaaaa"), "right");
+  drawLabel(ctx, `${intel.discountPercent}% off start`, new Rect(470, 160, 204, 28), Font.systemFont(15), new Color("aaaaaa"), "right");
 
   let badgeX = 230;
   if (entry.allTimeLow) { ctx.setFillColor(new Color("1f5a31")); ctx.fillRect(new Rect(badgeX, 196, 154, 32)); drawLabel(ctx, "LOWEST PRICE", new Rect(badgeX, 201, 154, 24), Font.boldSystemFont(13), Color.white(), "center"); badgeX += 164; }
@@ -272,7 +276,7 @@ async function dashboard(items) {
     const saved = summary.addText(money(radar.totalPotentialSavings, currency), "potential saving"); saved.widthWeight = 32; saved.rightAligned(); table.addRow(summary);
 
     if (radar.topDeals.length) {
-      const top = new UITableRow(); top.isHeader = true; top.height = 38; top.addText("Top deals", "Best opportunities right now"); table.addRow(top);
+      const top = new UITableRow(); top.isHeader = true; top.height = 38; top.addText("Top deals", "Best retailer-aware opportunities right now"); table.addRow(top);
       for (const entry of radar.topDeals) await addCardRow(table, entry, items, rebuild);
     }
 
