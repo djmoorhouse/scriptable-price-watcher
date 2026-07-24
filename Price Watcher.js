@@ -1,6 +1,6 @@
 const Storage = importModule("PW_Storage");
 const Scraper = importModule("PW_Scraper");
-const APP_VERSION = "0.2.0";
+const APP_VERSION = "0.3.0";
 
 function money(value, currency) {
   try {
@@ -227,15 +227,6 @@ async function makeWidget(items) {
   return w;
 }
 
-async function chooseItem(items, title) {
-  const a = new Alert();
-  a.title = title;
-  items.forEach(item => a.addAction(`${item.title}\n${money(item.currentPrice, item.currency)}`));
-  a.addCancelAction("Cancel");
-  const index = await a.presentSheet();
-  return index >= 0 ? index : null;
-}
-
 async function productMenu(item, items) {
   while (true) {
     const initial = Number.isFinite(item.initialPrice) ? item.initialPrice : item.currentPrice;
@@ -247,9 +238,10 @@ async function productMenu(item, items) {
     a.addAction("Edit target price");
     a.addAction("Price history");
     a.addAction("Open product page");
+    a.addDestructiveAction("Remove product");
     a.addCancelAction("Back");
     const action = await a.presentAlert();
-    if (action === -1) return;
+    if (action === -1) return false;
     if (action === 0) {
       try {
         await refreshItem(item, true);
@@ -267,48 +259,107 @@ async function productMenu(item, items) {
       await alert("Price history", historyText(item));
     } else if (action === 3) {
       Safari.open(item.url);
+    } else if (action === 4) {
+      const confirm = new Alert();
+      confirm.title = "Remove product?";
+      confirm.message = item.title;
+      confirm.addDestructiveAction("Remove");
+      confirm.addCancelAction("Cancel");
+      if (await confirm.presentAlert() === 0) {
+        const index = items.findIndex(x => x.id === item.id);
+        if (index >= 0) items.splice(index, 1);
+        await Storage.save(items);
+        return true;
+      }
     }
   }
 }
 
-async function runApp() {
-  let items = await Storage.load();
-  while (true) {
-    const menu = new Alert();
-    menu.title = "Price Watcher";
-    menu.message = items.length ? `${items.length} product${items.length === 1 ? "" : "s"} being watched\nVersion ${APP_VERSION}` : `No products added yet\nVersion ${APP_VERSION}`;
-    menu.addAction("Add product");
-    if (items.length) {
-      menu.addAction("View products");
-      menu.addAction("Refresh all");
-      menu.addDestructiveAction("Remove product");
-    }
-    menu.addCancelAction("Done");
-    const choice = await menu.presentSheet();
-    if (choice === -1) break;
+function dashboardSubtitle(item) {
+  const initial = Number.isFinite(item.initialPrice) ? item.initialPrice : item.currentPrice;
+  const pct = percentChange(initial, item.currentPrice);
+  const movement = Number.isFinite(pct) && Math.abs(pct) >= 0.01
+    ? `${pct < 0 ? "▼" : "▲"} ${Math.abs(pct).toFixed(1)}%`
+    : "No change";
+  const target = Number.isFinite(item.targetPrice) ? ` • Target ${money(item.targetPrice, item.currency)}` : "";
+  return `${item.store || storeName(item.url)} • ${movement}${target}`;
+}
 
-    if (choice === 0) {
+async function presentDashboard(items) {
+  const table = new UITable();
+  table.showSeparators = true;
+
+  async function rebuild() {
+    table.removeAllRows();
+
+    const titleRow = new UITableRow();
+    titleRow.isHeader = true;
+    titleRow.height = 54;
+    const title = titleRow.addText("Price Watcher", `${items.length} product${items.length === 1 ? "" : "s"} • v${APP_VERSION}`);
+    title.titleFont = Font.boldSystemFont(24);
+    title.subtitleFont = Font.systemFont(11);
+    table.addRow(titleRow);
+
+    const actions = new UITableRow();
+    actions.height = 48;
+    const add = actions.addButton("＋ Add product");
+    add.widthWeight = 50;
+    add.onTap = async () => {
       const product = await promptForProduct();
       if (product) {
         items.push(product);
         await Storage.save(items);
-        await alert("Added", `${product.title}\n${money(product.currentPrice, product.currency)}`);
+        await rebuild();
+        table.reload();
       }
-    } else if (choice === 1) {
-      const index = await chooseItem(items, "Products");
-      if (index !== null) await productMenu(items[index], items);
-    } else if (choice === 2) {
+    };
+    const refresh = actions.addButton("↻ Refresh all");
+    refresh.widthWeight = 50;
+    refresh.onTap = async () => {
       const result = await refreshAll(items, true);
+      await rebuild();
+      table.reload();
       await alert("Refresh complete", `${result.changed} price change${result.changed === 1 ? "" : "s"}.\n${result.failed} failed.`);
-    } else if (choice === 3) {
-      const index = await chooseItem(items, "Remove product");
-      if (index !== null) {
-        const removed = items.splice(index, 1)[0];
-        await Storage.save(items);
-        await alert("Removed", removed.title);
+    };
+    table.addRow(actions);
+
+    if (!items.length) {
+      const empty = new UITableRow();
+      empty.height = 90;
+      empty.addText("No products yet", "Tap ‘Add product’ above to start watching a price.");
+      table.addRow(empty);
+      return;
+    }
+
+    for (const item of items) {
+      const row = new UITableRow();
+      row.height = 78;
+      row.dismissOnSelect = false;
+      const image = await loadImage(item.imageUrl);
+      if (image) {
+        const cell = row.addImage(image);
+        cell.widthWeight = 18;
       }
+      const info = row.addText(item.title, dashboardSubtitle(item));
+      info.widthWeight = 57;
+      info.titleFont = Font.semiboldSystemFont(14);
+      info.subtitleFont = Font.systemFont(11);
+      const price = row.addText(money(item.currentPrice, item.currency), item.currentPrice === item.lowestPrice ? "Lowest seen" : `Low ${money(item.lowestPrice, item.currency)}`);
+      price.widthWeight = 25;
+      price.rightAligned();
+      price.titleFont = Font.boldSystemFont(16);
+      price.subtitleFont = Font.systemFont(10);
+      row.onSelect = async () => {
+        await productMenu(item, items);
+        await rebuild();
+        table.reload();
+      };
+      table.addRow(row);
     }
   }
+
+  await rebuild();
+  await table.present(true);
 }
 
 let items = await Storage.load();
@@ -316,6 +367,6 @@ if (config.runsInWidget) {
   await refreshAll(items, true);
   Script.setWidget(await makeWidget(items));
 } else {
-  await runApp();
+  await presentDashboard(items);
 }
 Script.complete();
