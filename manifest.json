@@ -1,0 +1,15 @@
+{
+  "app": "Price Watcher",
+  "version": "0.7.0",
+  "minimumInstallerVersion": "1.0.0",
+  "entryPoint": "Price Watcher.js",
+  "files": [
+    "Price Watcher.js",
+    "PW_App.js",
+    "PW_Storage.js",
+    "PW_Scraper.js",
+    "PW_Analytics.js",
+    "PW_Radar.js",
+    "Install Price Watcher.js"
+  ]
+}
