@@ -1,3 +1,14 @@
+// Scriptable can return null for optional Alert text fields on some devices.
+// Normalise those values so callers can safely use trim() and replace().
+if (!globalThis.__PW_ALERT_TEXT_FIELD_PATCHED__) {
+  const originalTextFieldValue = Alert.prototype.textFieldValue;
+  Alert.prototype.textFieldValue = function(index) {
+    const value = originalTextFieldValue.call(this, index);
+    return value == null ? "" : String(value);
+  };
+  globalThis.__PW_ALERT_TEXT_FIELD_PATCHED__ = true;
+}
+
 function daysBetween(a, b) {
   const start = new Date(a).getTime();
   const end = new Date(b).getTime();
