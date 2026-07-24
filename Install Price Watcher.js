@@ -1,4 +1,4 @@
-// One-tap installer for Scriptable Price Watcher v0.8.0
+// One-tap installer for Scriptable Price Watcher v0.9.0
 const BASE = "https://raw.githubusercontent.com/djmoorhouse/scriptable-price-watcher/main/";
 const FILES = [
   "Price Watcher.js",
@@ -8,6 +8,7 @@ const FILES = [
   "PW_Analytics.js",
   "PW_Radar.js",
   "PW_RetailerIntel.js",
+  "PW_StockIntel.js",
   "PW_Updater.js",
   "PW_Briefing.js"
 ];
@@ -23,8 +24,8 @@ for (const name of FILES) {
 }
 
 const a = new Alert();
-a.title = "Price Watcher v0.8.0 installed";
-a.message = "Deal Radar, retailer intelligence, automatic updates, daily briefing and all supporting modules are installed. Open 'Price Watcher' and run it.";
+a.title = "Price Watcher v0.9.0 installed";
+a.message = "Stock history, scarcity detection, size-aware recommendations, Deal Radar, retailer intelligence, automatic updates and daily briefing are installed. Open 'Price Watcher' and run it.";
 a.addAction("OK");
 await a.presentAlert();
 Script.complete();
